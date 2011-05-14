@@ -1,5 +1,8 @@
 package ee.ut.cs.willmore;
 
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Date;
@@ -14,6 +17,7 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.LongWritable;
@@ -38,7 +42,6 @@ public class KMeansCluster {
 	private static String CONF_MASTER_TASK = "master.task.";
 	private static String CONF_FILE_SOURCE = "source.";
 
-	
 
 	public static class ClusterBSP extends BSP {
 		
@@ -417,8 +420,10 @@ public class KMeansCluster {
 
 		FileSystem fileSys = FileSystem.get(conf);
 		
+		final long jobTime = System.currentTimeMillis();
+		
 		final String srcFileName = "/tmp/random-data-in";
-		final String srcFileOutput = "/tmp/random-data-out";
+		final String fileOutputDir = "/tmp/random-data-out/" + jobTime + "/";
 		
 		final Path srcFilePath = new Path(srcFileName);
 		final int numPoints = 1000;
@@ -426,12 +431,20 @@ public class KMeansCluster {
 		generateSourceFile(fileSys, srcFilePath, numPoints, range);
 		
 		conf.set(CONF_FILE_SOURCE, srcFilePath.toString());
-		conf.set(CONF_FILE_OUT, "/tmp/random-data-out");
+		conf.set(CONF_FILE_OUT, fileOutputDir);
 		
 		if (bsp.waitForCompletion(true)) {
 		//	printOutput(fileSys, cluster, conf);
 			System.out.println("Done!");
 		}
+		
+		String localOut = "/tmp/" + jobTime + "/local/";
+		
+		
+		fileSys.copyToLocalFile(new Path(fileOutputDir), new Path(localOut));
+		
+		System.out.println("Output in: " + new Path(localOut));
+
 	}
 
 }
