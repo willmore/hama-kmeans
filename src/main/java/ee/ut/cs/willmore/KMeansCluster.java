@@ -1,29 +1,18 @@
 package ee.ut.cs.willmore;
 
-import java.io.BufferedWriter;
-import java.io.File;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Date;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
-import org.apache.hadoop.fs.FSDataOutputStream;
-import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.io.LongWritable;
-import org.apache.hadoop.io.SequenceFile;
-import org.apache.hadoop.io.Text;
-import org.apache.hadoop.io.SequenceFile.CompressionType;
 import org.apache.hama.HamaConfiguration;
 import org.apache.hama.bsp.BSP;
 import org.apache.hama.bsp.BSPJob;
@@ -36,8 +25,6 @@ import org.apache.zookeeper.KeeperException;
 public class KMeansCluster {
 	
 
-	private static String TMP_OUTPUT = "/tmp/test-example/";
-
 	private static final String CONF_FILE_OUT = "output.";
 	private static String CONF_MASTER_TASK = "master.task.";
 	private static String CONF_FILE_SOURCE = "source.";
@@ -45,21 +32,10 @@ public class KMeansCluster {
 
 	public static class ClusterBSP extends BSP {
 		
-		
-		/**
-		 * Configuration option to tell the task how data points will be sourced.
-		 * RANDOM: Master generates the points randomly.
-		 * PROVIDED: Points are provided to the task as an input file.
-		 */
-		public static enum SourceMode {
-			RANDOM,
-			PROVIDED
-		}
-		
 		public static final Log LOG = LogFactory.getLog(ClusterBSP.class);
 		private Configuration conf;
 		private FileSystem fileSys;
-		private int numPeers;
+		//private int numPeers;
 		private String masterTask;
 
 		//Map of peer name => cluster center (mean)
@@ -72,6 +48,7 @@ public class KMeansCluster {
 		public void bsp(BSPPeerProtocol bspPeer) throws IOException,
 				KeeperException, InterruptedException {
 
+			
 			if (isMaster(bspPeer)) {
 				masterInitialize(bspPeer);	
 			}
@@ -318,16 +295,6 @@ public class KMeansCluster {
 			return bspPeer.getPeerName().equals(masterTask);
 		}
 
-		private void writeLogToFile(String string, int i) throws IOException {
-			SequenceFile.Writer writer = SequenceFile.createWriter(fileSys,
-					conf, new Path(TMP_OUTPUT + i), LongWritable.class,
-					Text.class, CompressionType.NONE);
-			writer.append(new LongWritable(System.currentTimeMillis()),
-					new Text("Hello BSP from " + (i + 1) + " of " + numPeers + ": "
-							+ string));
-			writer.close();
-		}
-
 		public Configuration getConf() {
 			return conf;
 		}
@@ -335,7 +302,7 @@ public class KMeansCluster {
 		public void setConf(Configuration conf) {
 			this.conf = conf;
 			this.masterTask = conf.get(CONF_MASTER_TASK);
-			numPeers = Integer.parseInt(conf.get("bsp.peers.num"));
+			//numPeers = Integer.parseInt(conf.get("bsp.peers.num"));
 			try {
 				fileSys = FileSystem.get(conf);
 			} catch (IOException e) {
@@ -345,59 +312,14 @@ public class KMeansCluster {
 
 	}
 
-	private static void printOutput(FileSystem fileSys, ClusterStatus cluster,
-			HamaConfiguration conf) throws IOException {
-		System.out.println("Each task printed the \"Hello World\" as below:");
-		for (int i = 0; i < cluster.getGroomServers(); i++) {
-			SequenceFile.Reader reader = new SequenceFile.Reader(fileSys,
-					new Path(TMP_OUTPUT + i), conf);
-			LongWritable timestamp = new LongWritable();
-			Text message = new Text();
-			reader.next(timestamp, message);
-			System.out.println(new Date(timestamp.get()) + ": " + message);
-			reader.close();
-		}
-	}
-
-	private static void initTempDir(FileSystem fileSys) throws IOException {
-		if (fileSys.exists(new Path(TMP_OUTPUT))) {
-			fileSys.delete(new Path(TMP_OUTPUT), true);
-		}
-	}
-
-	/**
-	 * Create a randomly generated dataset of points saved on the Hadoop
-	 * file-system at the specified {@code fileName}. 
-	 * {@code numPoints} of 3D double-value points, with X,Y,Z each within [0,{@code range}).
-	 * 
-	 * @param fileSys
-	 * @param fileName
-	 * @param numPoints
-	 * @param range
-	 * @throws IOException
-	 */
-	private static void generateSourceFile(FileSystem fileSys, Path fileName, int numPoints, int range) throws IOException {
-		
-		final FSDataOutputStream out = fileSys.create(fileName, true);
-		final Random random = new Random();
-		
-		out.writeInt(numPoints);
-		
-		for (int i = 0; i < numPoints; i++) {
-			
-			out.writeDouble(random.nextDouble()*range); // X
-			out.writeDouble(random.nextDouble()*range); // Y 
-			out.writeDouble(random.nextDouble()*range); // Z		
-		}
-		
-		out.close();
-	}
 	
 	public static void main(String[] args) throws InterruptedException,
 			IOException, ClassNotFoundException {
 		// BSP job configuration
 		HamaConfiguration conf = new HamaConfiguration();
 
+		conf.setInt("bsp.local.tasks.maximum", 10);
+		
 		BSPJob bsp = new BSPJob(conf, KMeansCluster.class);
 		// Set the job name
 		bsp.setJobName("K Means Clustering");
@@ -414,8 +336,6 @@ public class KMeansCluster {
 			break;
 		}
 		
-		
-
 		bsp.setNumBspTask(cluster.getGroomServers());
 
 		FileSystem fileSys = FileSystem.get(conf);
@@ -426,20 +346,19 @@ public class KMeansCluster {
 		final String fileOutputDir = "/tmp/random-data-out/" + jobTime + "/";
 		
 		final Path srcFilePath = new Path(srcFileName);
-		final int numPoints = 1000;
+		final int numPoints = 10000;
 		final int range = 100;
-		generateSourceFile(fileSys, srcFilePath, numPoints, range);
+		//new CubeRandomPointGenerator(5, 10).generateSourceFile(fileSys, srcFilePath, numPoints, range);
+		new SphereRandomPointGenerator(10, 5).generateSourceFile(fileSys, srcFilePath, numPoints, range);
 		
 		conf.set(CONF_FILE_SOURCE, srcFilePath.toString());
 		conf.set(CONF_FILE_OUT, fileOutputDir);
 		
 		if (bsp.waitForCompletion(true)) {
-		//	printOutput(fileSys, cluster, conf);
 			System.out.println("Done!");
 		}
 		
 		String localOut = "/tmp/" + jobTime + "/local/";
-		
 		
 		fileSys.copyToLocalFile(new Path(fileOutputDir), new Path(localOut));
 		

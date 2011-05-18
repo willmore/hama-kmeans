@@ -12,10 +12,11 @@ ax = p3.Axes3D(fig)
 
 cmap=plt.get_cmap('spectral')
 
-colors = ['b','g','r','c','m','y','k']
+colors = ['b','g','r','c','m','y','k', "chartreuse", "DarkSeaGreen", "DarkSlateBlue"]
+ 
 markers = ['s','o','^','>','v' , '<' ,'d','p','h','8','+','x']
 
-dir = "/tmp/1305388627188/local"
+dir = "/tmp/1305737986917/local"
 files = [os.path.join(dir, f) for f in os.listdir(dir)]
 
 crcRe = re.compile(".*\.crc")
