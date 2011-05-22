@@ -5,7 +5,9 @@ import static java.lang.Math.pow;
 
 public class Point3D {
 
-	final double x,y,z;
+	public final double x;
+	public final double y;
+	public final double z;
 
 	public Point3D(double x, double y, double z) {
 		this.x = x;

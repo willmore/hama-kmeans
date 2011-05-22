@@ -2,7 +2,6 @@ package ee.ut.cs.willmore;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.List;
 import java.util.Random;
 
@@ -78,6 +77,7 @@ public class SphereRandomPointGenerator implements PointGenerator {
 		final List<Sphere> spheres = new ArrayList<Sphere>(numSpheres);
 		
 		for (int i = 0; i < numSpheres; i++) {
+			
 			spheres.add(new Sphere(new Point3D(random.nextDouble()*range, 
 											   random.nextDouble()*range, 
 											   random.nextDouble()*range),

@@ -4,6 +4,13 @@
   <artifactId>hama-kmeans</artifactId>
   <version>0.0.1-SNAPSHOT</version>
   <name>Hama K-Means</name>
+
+	<distributionManagement>
+		<repository>
+			<id>gh-pages</id>
+			<url>file:///${basedir}/../hama-kmeans-pages/repository/</url>
+		</repository>
+	</distributionManagement>
   
   <dependencies>
     <dependency>

@@ -1,6 +1,7 @@
 package ee.ut.cs.willmore;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -17,25 +18,24 @@ import org.apache.hama.HamaConfiguration;
 import org.apache.hama.bsp.BSP;
 import org.apache.hama.bsp.BSPJob;
 import org.apache.hama.bsp.BSPJobClient;
+import org.apache.hama.bsp.BSPMessage;
 import org.apache.hama.bsp.BSPPeerProtocol;
+import org.apache.hama.bsp.ByteMessage;
 import org.apache.hama.bsp.ClusterStatus;
 import org.apache.hama.bsp.DoubleMessage;
 import org.apache.zookeeper.KeeperException;
 
 public class KMeansCluster {
 	
-
-	private static final String CONF_FILE_OUT = "output.";
-	private static String CONF_MASTER_TASK = "master.task.";
-	private static String CONF_FILE_SOURCE = "source.";
-
+	static final String CONF_FILE_OUT = "output.";
+	static String CONF_MASTER_TASK = "master.task.";
+	static String CONF_FILE_SOURCE = "source.";
 
 	public static class ClusterBSP extends BSP {
 		
 		public static final Log LOG = LogFactory.getLog(ClusterBSP.class);
 		private Configuration conf;
 		private FileSystem fileSys;
-		//private int numPeers;
 		private String masterTask;
 
 		//Map of peer name => cluster center (mean)
@@ -43,35 +43,43 @@ public class KMeansCluster {
 		
 		//All points currently in my cluster
 		final List<Point3D> points = new ArrayList<Point3D>();
-		
+				
 		@Override
-		public void bsp(BSPPeerProtocol bspPeer) throws IOException,
+		public void bsp(final BSPPeerProtocol bspPeer) throws IOException,
 				KeeperException, InterruptedException {
-
-			
+		
 			if (isMaster(bspPeer)) {
 				masterInitialize(bspPeer);	
 			}
 			
 			do {	
+				//LOG.info("At barrier 1");
 				bspPeer.sync();
+				//LOG.info("After barrier 1");
 				
 				receivePeerMeans(bspPeer);
 				
 				int numChange = assignmentStep(bspPeer);
+				
+				//LOG.info("At barrier 2");
 				bspPeer.sync();
-
+				//LOG.info("After barrier 2");
+				
 				updateStep(bspPeer);
 				
 				notifyMasterNumChange(bspPeer, numChange);
 				
+				//LOG.info("At barrier 3");
 				bspPeer.sync();
+				//LOG.info("After barrier 3");
 				
 				if (isMaster(bspPeer)) {
 					broadcastContinue(bspPeer);
 				}
 
+				//LOG.info("At barrier 4");
 				bspPeer.sync();
+				//LOG.info("After barrier 4");
 				
 				broadcastMyMean(bspPeer);
 				
@@ -81,34 +89,76 @@ public class KMeansCluster {
 			
 		}
 
-		private void writeFinalOutput(BSPPeerProtocol bspPeer) throws IOException {
-			String fileName = conf.get(CONF_FILE_OUT) + "-" + bspPeer.getPeerName();
+		private void writeFinalOutput(final BSPPeerProtocol bspPeer) throws IOException {
+			String fileName = conf.get(CONF_FILE_OUT) + "/" + bspPeer.getPeerName();
 			
-			PointWriter writer = new PointWriter(fileSys.create(new Path(fileName), true));
+			PointWriter writer = new PointWriter(fileSys.create(new Path(fileName.replace(":", "_")), true));
 			
 			writer.write(calculateCenter(points));
 			writer.write(points);
 			
 			writer.close();
 		}
+		
+		private static BSPMessage pointToByteMessage(PointMessage pm) throws IOException {
+			
+			
+			ByteBuffer buffer = ByteBuffer.allocate(pm.getData().size() * 3 * 8);
+		    
+			for (Point3D p : pm.getData()) {
+				buffer.putDouble(p.x);
+				buffer.putDouble(p.y);
+				buffer.putDouble(p.z);
+			}
+		   
+			return new ByteMessage(pm.getTag().getBytes(), buffer.array());
+			
+		}
+		
 
-		private void notifyMasterNumChange(BSPPeerProtocol bspPeer,
-				int numChange) throws IOException {
-			//Notify master of #of changes
+		private static PointMessage byteToPointMessage(BSPMessage bMsg) throws IOException {
+						
+			ByteMessage bm = (ByteMessage)bMsg;
+			
+			ByteBuffer buffer = ByteBuffer.wrap(bm.getData());
+			
+			List<Point3D> points = new ArrayList<Point3D>();
+			
+			while (buffer.hasRemaining()) {	
+				points.add(new Point3D(buffer.getDouble(), buffer.getDouble(), buffer.getDouble()));
+			}
+		
+			return new PointMessage(new String(bm.getTag()), points);
+			
+		}
+		
+
+		/**
+		 * Notify master of number of point ownership changes
+		 */
+		private void notifyMasterNumChange(final BSPPeerProtocol bspPeer,
+										   final int numChange) throws IOException {
+			
+			LOG.info("Notifying master of point change count: " + numChange);
+			
 			bspPeer.send(masterTask, new DoubleMessage("CHANGE_COUNT", numChange));
 		}
 
-		private void masterInitialize(BSPPeerProtocol bspPeer) throws IOException {
-		 
-			Path srcFilePath = new Path(conf.get(CONF_FILE_SOURCE));
-			System.out.println(conf.get(CONF_FILE_SOURCE));
+		private void masterInitialize(final BSPPeerProtocol bspPeer) throws IOException {
+
+			LOG.info("Starting Master");
+			
+			final Path srcFilePath = new Path(conf.get(CONF_FILE_SOURCE));
+
 			if (!fileSys.exists(srcFilePath)) {
 				throw new RuntimeException("Could not find source file:" + srcFilePath.getName());
 			}
 			
-			FSDataInputStream srcFile = fileSys.open(srcFilePath);
+			final FSDataInputStream srcFile = fileSys.open(srcFilePath);
 			
 			final int numPoints = srcFile.readInt();
+			
+			LOG.info("Number of points is: " + numPoints);
 			
 			for (int i = 0; i < numPoints; i++) {
 				points.add(new Point3D(srcFile.readDouble(), 
@@ -120,30 +170,38 @@ public class KMeansCluster {
 			//Means are chosen "randomly" from points
 
 			int ctr = 0; 
-			for (String peer : bspPeer.getAllPeerNames()) {
+			for (final String peer : bspPeer.getAllPeerNames()) {
 				Point3D p = points.get(ctr++);
 				peerMeanMap.put(peer, p);
 			}
 			
 			// Broadcast all peer => mean pairs
-			for (String peer : bspPeer.getAllPeerNames()) {
+			for (final String peer : bspPeer.getAllPeerNames()) {
 				// Only send message to others (not myself)
 				if (peer.equals(bspPeer.getPeerName())) {
 					continue;
 				}
 
-				for (Map.Entry<String, Point3D> peerMean : peerMeanMap
+				for (final Map.Entry<String, Point3D> peerMean : peerMeanMap
 						.entrySet()) {
 
+					
 					PointMessage msg = new PointMessage(peerMean.getKey(),
 							peerMean.getValue());
-					bspPeer.send(peer, msg);
+					bspPeer.send(peer, pointToByteMessage(msg));
 
 				}
 			}
+			
+			LOG.info("Initial point messages sent to peers");
 		}
 		
-		private boolean shouldContinue(BSPPeerProtocol bspPeer) throws IOException {
+		
+		/**
+		 * Master reads the total number of changed messages and returns true if
+		 * the process should continue, else false.
+		 */
+		private boolean shouldContinue(final BSPPeerProtocol bspPeer) throws IOException {
 			
 			assert (1 == bspPeer.getNumCurrentMessages());
 			
@@ -154,7 +212,7 @@ public class KMeansCluster {
 		 * Receive re-assignment counts from all peers. If sum > threshold, broadcast True, else False
 		 * @throws IOException 
 		 */
-		private void broadcastContinue(BSPPeerProtocol bspPeer) throws IOException {
+		private void broadcastContinue(final BSPPeerProtocol bspPeer) throws IOException {
 			
 			int total = 0;
 			
@@ -163,18 +221,21 @@ public class KMeansCluster {
 				total += msg.getData();
 			}
 			
-			System.out.println("Total Changed = " + total);
-			DoubleMessage bMsg = new DoubleMessage("COUNTINUE", total > 0 ? 1 : 0);
+			final DoubleMessage bMsg = new DoubleMessage("CONTINUE", total > 0 ? 1 : 0);
 			
-			for (String peer : bspPeer.getAllPeerNames()) {
+			for (final String peer : bspPeer.getAllPeerNames()) {
 				bspPeer.send(peer, bMsg);
 			}
 		}
 
-		private void receivePeerMeans(BSPPeerProtocol bspPeer) throws IOException {
+		/**
+		 * Process notification about the mean values of peers.
+		 */
+		private void receivePeerMeans(final BSPPeerProtocol bspPeer) throws IOException {
 			
-			PointMessage pMsg;
-			while((pMsg = (PointMessage)bspPeer.getCurrentMessage()) != null) {
+			BSPMessage bMsg;
+			while((bMsg = bspPeer.getCurrentMessage()) != null) {
+				PointMessage pMsg = byteToPointMessage(bMsg);
 				assert(peerMeanMap.containsKey((String)pMsg.getTag()));
 				peerMeanMap.put(pMsg.getTag(),pMsg.getData().get(0));
 			}
@@ -182,10 +243,10 @@ public class KMeansCluster {
 		}
 
 		//Receive my new points and update my mean, notifying peers of change
-		private int assignmentStep(BSPPeerProtocol bspPeer) throws IOException {
+		private int assignmentStep(final BSPPeerProtocol bspPeer) throws IOException {
 						
 			//For each of my points, find new best cluster by geometric distance.			
-			Map<String, List<Point3D>> peerNewPoints = new HashMap<String, List<Point3D>>();
+			final Map<String, List<Point3D>> peerNewPoints = new HashMap<String, List<Point3D>>();
 			
 			for (String peer : peerMeanMap.keySet()) {
 				peerNewPoints.put(peer, new ArrayList<Point3D>());
@@ -195,7 +256,7 @@ public class KMeansCluster {
 						
 			for (Iterator<Point3D> pointItr = points.iterator(); pointItr.hasNext();) {
 				
-				Point3D obs = pointItr.next();
+				final Point3D obs = pointItr.next();
 				
 				double min = Double.MAX_VALUE;
 				String minPeer = null;
@@ -223,9 +284,9 @@ public class KMeansCluster {
 			
 			//Notify other clusters of new points	
 			for (Map.Entry<String, List<Point3D>> peerPoints : peerNewPoints.entrySet()) {
-				
-				//System.out.println("Sending " + peerPoints.getValue().size() + " to " + peerPoints.getKey());
-				bspPeer.send(peerPoints.getKey(), new PointMessage("POINTS", peerPoints.getValue()));
+				LOG.info("Send " + peerPoints.getValue().size() + " to " + peerPoints.getKey());
+				bspPeer.send(peerPoints.getKey(), 
+						     pointToByteMessage(new PointMessage("POINTS from " + bspPeer.getPeerName(), peerPoints.getValue())));
 			}
 				
 			return changeCount;
@@ -237,7 +298,7 @@ public class KMeansCluster {
 		 * {@link http://en.wikipedia.org/wiki/K-means_clustering#Standard_algorithm}
 		 * 
 		 * Receive PointMessages from peers that notify me of new points
-		 * assigned to my cluster. Calculate the new geometrical center of my
+		 * assigned to my cluster. Calculate the new geometric center of my
 		 * cluster.
 		 * 
 		 * @param bspPeer
@@ -245,13 +306,17 @@ public class KMeansCluster {
 		 */
 		private void updateStep(BSPPeerProtocol bspPeer) throws IOException {	
 			
-			PointMessage pMsg;
+			BSPMessage bMsg;
 			boolean changed = false;
-			
-			while((pMsg = (PointMessage)bspPeer.getCurrentMessage()) != null) {
+			LOG.info("Start processing point messages");
+			while((bMsg = bspPeer.getCurrentMessage()) != null) {
+				final PointMessage pMsg = byteToPointMessage(bMsg);
+				LOG.info("Received " + pMsg.getData().size() + " points from tag = " + pMsg.getTag());
 				points.addAll(pMsg.getData());
 				changed = true;
 			}
+			
+			LOG.info("My point count is now: " + points.size());
 						
 			if (changed) {
 				peerMeanMap.put(bspPeer.getPeerName(), calculateCenter(points));
@@ -272,7 +337,7 @@ public class KMeansCluster {
 				PointMessage msg = new PointMessage(bspPeer.getPeerName(), myMean);
 				
 				if (!peer.equals(bspPeer.getPeerName())) {
-					bspPeer.send(peer, msg);
+					bspPeer.send(peer, pointToByteMessage(msg));
 				}
 			}
 		}
@@ -302,7 +367,7 @@ public class KMeansCluster {
 		public void setConf(Configuration conf) {
 			this.conf = conf;
 			this.masterTask = conf.get(CONF_MASTER_TASK);
-			//numPeers = Integer.parseInt(conf.get("bsp.peers.num"));
+
 			try {
 				fileSys = FileSystem.get(conf);
 			} catch (IOException e) {
@@ -315,11 +380,17 @@ public class KMeansCluster {
 	
 	public static void main(String[] args) throws InterruptedException,
 			IOException, ClassNotFoundException {
+		
+		if (2 != args.length) {
+			System.out.println("Usage: KMeansCluster <num_points> <num_clusters>");
+			System.exit(-1);
+		}
+		
+		final int k = Integer.valueOf(args[1]);
+		
 		// BSP job configuration
 		HamaConfiguration conf = new HamaConfiguration();
 
-		conf.setInt("bsp.local.tasks.maximum", 10);
-		
 		BSPJob bsp = new BSPJob(conf, KMeansCluster.class);
 		// Set the job name
 		bsp.setJobName("K Means Clustering");
@@ -327,41 +398,53 @@ public class KMeansCluster {
 
 		// Set the task size as a number of GroomServer
 		BSPJobClient jobClient = new BSPJobClient(conf);
-		ClusterStatus cluster = jobClient.getClusterStatus(false);
+		ClusterStatus cluster = jobClient.getClusterStatus(true);
 
+		System.out.println("Grooms are: " + cluster.getActiveGroomNames());
+		
 		// Choose one as a master
 		for (String peerName : cluster.getActiveGroomNames().values()) {
 			System.out.println("Master Peer:" + peerName);
 			conf.set(CONF_MASTER_TASK, peerName);
 			break;
 		}
+
+		System.out.println("Setting number of tasks / clusters to:" + cluster.getGroomServers());
+		
+		if (k > cluster.getGroomServers()) {
+			System.out.println("Request K of " + k + " is greater than number of grooms " + cluster.getGroomServers());
+			System.exit(-1);
+		}
 		
 		bsp.setNumBspTask(cluster.getGroomServers());
 
 		FileSystem fileSys = FileSystem.get(conf);
-		
+
 		final long jobTime = System.currentTimeMillis();
-		
-		final String srcFileName = "/tmp/random-data-in";
-		final String fileOutputDir = "/tmp/random-data-out/" + jobTime + "/";
-		
+
+		final String srcFileName = "/tmp/kmeans_" + jobTime + "/random-data-in";
+		final String fileOutputDir = "/tmp/kmeans_" + jobTime + "/output";
+
 		final Path srcFilePath = new Path(srcFileName);
-		final int numPoints = 10000;
-		final int range = 100;
-		//new CubeRandomPointGenerator(5, 10).generateSourceFile(fileSys, srcFilePath, numPoints, range);
-		new SphereRandomPointGenerator(10, 5).generateSourceFile(fileSys, srcFilePath, numPoints, range);
+		final int numPoints = Integer.valueOf(args[0]);
 		
+		final int range = 100; //Size of X,Y,Z cube containing points
+
+		new SphereRandomPointGenerator(k, 10).generateSourceFile(fileSys, srcFilePath, numPoints, range);
+
 		conf.set(CONF_FILE_SOURCE, srcFilePath.toString());
 		conf.set(CONF_FILE_OUT, fileOutputDir);
+		
+		System.out.println("Starting job");
 		
 		if (bsp.waitForCompletion(true)) {
 			System.out.println("Done!");
 		}
-		
+
 		String localOut = "/tmp/" + jobTime + "/local/";
-		
+
 		fileSys.copyToLocalFile(new Path(fileOutputDir), new Path(localOut));
-		
+
 		System.out.println("Output in: " + new Path(localOut));
 
 	}
