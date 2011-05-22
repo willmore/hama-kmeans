@@ -29,6 +29,7 @@ public class KMeansCluster {
 	static final String CONF_FILE_OUT = "output.";
 	static String CONF_MASTER_TASK = "master.task.";
 	static String CONF_FILE_SOURCE = "source.";
+	
 
 	public static class ClusterBSP extends BSP {
 		
@@ -36,6 +37,8 @@ public class KMeansCluster {
 		private Configuration conf;
 		private FileSystem fileSys;
 		private String masterTask;
+		
+		static final String POINT_MSG_TAG = "POINTS";
 
 		//Map of peer name => cluster center (mean)
 		final Map<String, Point3D> peerMeanMap = new HashMap<String, Point3D>();
@@ -51,40 +54,80 @@ public class KMeansCluster {
 				masterInitialize(bspPeer);	
 			}
 			
-			do {
-				assert (0 == bspPeer.getNumCurrentMessages());
+			while (true) {
+			
 				bspPeer.sync();
 				
-				receivePeerMeans(bspPeer);
+				boolean converged = processMessages(bspPeer);
+								
+				if (converged) {
+					break;
+				}
 				
-				int numChange = assignmentStep(bspPeer);
-				
-				assert (0 == bspPeer.getNumCurrentMessages());
-				bspPeer.sync();
+				assignmentStep(bspPeer);
 				
 				updateStep(bspPeer);
 				
-				notifyMasterNumChange(bspPeer, numChange);
 				
-				assert (0 == bspPeer.getNumCurrentMessages());
-				bspPeer.sync();
-				
-				if (isMaster(bspPeer)) {
-					broadcastContinue(bspPeer);
-				}
-				
-				assert (0 == bspPeer.getNumCurrentMessages());
-				bspPeer.sync();
-				
-				broadcastMyMean(bspPeer);
-				
-			} while (shouldContinue(bspPeer));
+			} 
 			
 			//Empty inbox as any messages are now unnecessary
 			flushReceivedMessages(bspPeer);
 			
-			writeFinalOutput(bspPeer);
+			writeFinalOutput(bspPeer);	
+		}
+
+		private boolean processMessages(BSPPeerProtocol bspPeer) throws IOException {
 			
+			boolean converged = true;
+			
+			BSPMessage msg;
+			while ((msg = bspPeer.getCurrentMessage()) != null) {
+				if (isPointMessage(msg)) {
+					addPoints(msg);
+				} else if (isMeanMessage(bspPeer, msg)) {
+					converged = updateMeanMap(msg) && converged;
+				} else {
+					throw new RuntimeException("Unknown msg tag: " + new String(msg.getTag()));
+				}
+			}
+			
+			
+			LOG.info("New Mean Map = " + peerMeanMap);
+			
+			return converged;
+		}
+
+		private boolean updateMeanMap(BSPMessage msg) throws IOException {
+			PointMessage pMsg = byteToPointMessage(msg);
+			
+			boolean converged = pMsg.getData().get(0).equals(peerMeanMap.get(pMsg.getTag()));
+			
+			peerMeanMap.put(pMsg.getTag(), pMsg.getData().get(0));
+			
+			return converged;
+		}
+
+		private void addPoints(BSPMessage msg) throws IOException {
+
+			points.addAll(byteToPointMessage(msg).getData());
+		}
+
+		private boolean isMeanMessage(BSPPeerProtocol bspPeer, BSPMessage msg) {
+			//Mean maps use the peer name as the tag
+			final String tag = new String(msg.getTag());
+			
+			for (String peer : bspPeer.getAllPeerNames()) {
+				if (peer.equals(tag)) {
+					return true;
+				}
+			}
+			
+			return false;
+		}
+
+		private boolean isPointMessage(BSPMessage msg) {
+			return POINT_MSG_TAG.equals(new String(msg.getTag()));
 		}
 
 		private void flushReceivedMessages(BSPPeerProtocol bspPeer) throws IOException {
@@ -92,8 +135,7 @@ public class KMeansCluster {
 			LOG.info("Flushing inbox");
 			while(bspPeer.getNumCurrentMessages() > 0) {
 				bspPeer.getCurrentMessage();
-			}
-			
+			}	
 		}
 
 		private void writeFinalOutput(final BSPPeerProtocol bspPeer) throws IOException {
@@ -112,8 +154,7 @@ public class KMeansCluster {
 		}
 		
 		private static BSPMessage pointToByteMessage(PointMessage pm) throws IOException {
-			
-			
+				
 			ByteBuffer buffer = ByteBuffer.allocate(pm.getData().size() * 3 * 8);
 		    
 			for (Point3D p : pm.getData()) {
@@ -138,21 +179,10 @@ public class KMeansCluster {
 				points.add(new Point3D(buffer.getDouble(), buffer.getDouble(), buffer.getDouble()));
 			}
 		
-			return new PointMessage(new String(bMsg.getTag()), points);
-			
+			return new PointMessage(new String(bMsg.getTag()), points);			
 		}
 		
 
-		/**
-		 * Notify master of number of point ownership changes
-		 */
-		private void notifyMasterNumChange(final BSPPeerProtocol bspPeer,
-										   final int numChange) throws IOException {
-			
-			LOG.info("Notifying master of point change count: " + numChange);
-			
-			bspPeer.send(masterTask, new BSPMessage("CHANGE_COUNT".getBytes(), Integer.toString(numChange).getBytes()));
-		}
 
 		private void masterInitialize(final BSPPeerProtocol bspPeer) throws IOException {
 
@@ -179,23 +209,21 @@ public class KMeansCluster {
 			//Assign one mean to each node
 			//Means are chosen "randomly" from points
 
+			final Map<String, Point3D> initPeerMeanMap = new HashMap<String, Point3D>();
+			
 			int ctr = 0; 
 			for (final String peer : bspPeer.getAllPeerNames()) {
 				Point3D p = points.get(ctr++);
-				peerMeanMap.put(peer, p);
+				initPeerMeanMap.put(peer, p);
 			}
 			
 			// Broadcast all peer => mean pairs
 			for (final String peer : bspPeer.getAllPeerNames()) {
-				// Only send message to others (not myself)
-				if (peer.equals(bspPeer.getPeerName())) {
-					continue;
-				}
 
-				for (final Map.Entry<String, Point3D> peerMean : peerMeanMap
-						.entrySet()) {
-
-					
+				LOG.info("Sending intial means to: " + peer);
+				
+				for (final Map.Entry<String, Point3D> peerMean : initPeerMeanMap.entrySet()) {
+	
 					PointMessage msg = new PointMessage(peerMean.getKey(),
 							peerMean.getValue());
 					bspPeer.send(peer, pointToByteMessage(msg));
@@ -205,61 +233,7 @@ public class KMeansCluster {
 			
 			LOG.info("Initial point messages sent to peers");
 		}
-		
-		
-		/**
-		 * Master reads the total number of changed messages and returns true if
-		 * the process should continue, else false.
-		 */
-		private boolean shouldContinue(final BSPPeerProtocol bspPeer) throws IOException {
-			
-			//assert (1 == bspPeer.getNumCurrentMessages());
-			
-			LOG.info("Testing if should continue, number of messages should be 1 and are: " + 
-					bspPeer.getNumCurrentMessages());
-			
-			return 1 == bspPeer.getCurrentMessage().getData()[0];	
-		}
 
-		/**
-		 * Receive re-assignment counts from all peers. If sum > threshold, broadcast True, else False
-		 * @throws IOException 
-		 */
-		private void broadcastContinue(final BSPPeerProtocol bspPeer) throws IOException {
-			
-			int total = 0;
-			
-			BSPMessage msg;
-			while((msg = bspPeer.getCurrentMessage()) != null) {
-				
-				total += Integer.valueOf(new String(msg.getData()));
-			}
-			
-			final boolean continueProcess = total > 0;
-			
-			
-			final BSPMessage bMsg = new BSPMessage("CONTINUE".getBytes(), continueProcess ? new byte[]{1} : new byte[]{0});
-			
-			LOG.info("Master sending continue msg: " +  continueProcess);
-			
-			for (final String peer : bspPeer.getAllPeerNames()) {
-				bspPeer.send(peer, bMsg);
-			}
-		}
-
-		/**
-		 * Process notification about the mean values of peers.
-		 */
-		private void receivePeerMeans(final BSPPeerProtocol bspPeer) throws IOException {
-			
-			BSPMessage bMsg;
-			while((bMsg = bspPeer.getCurrentMessage()) != null) {
-				PointMessage pMsg = byteToPointMessage(bMsg);
-				assert(peerMeanMap.containsKey((String)pMsg.getTag()));
-				peerMeanMap.put(pMsg.getTag(),pMsg.getData().get(0));
-			}
-						
-		}
 
 		//Receive my new points and update my mean, notifying peers of change
 		private int assignmentStep(final BSPPeerProtocol bspPeer) throws IOException {
@@ -310,7 +284,7 @@ public class KMeansCluster {
 				
 				LOG.info("Send " + peerPoints.getValue().size() + " to " + peerPoints.getKey());
 				bspPeer.send(peerPoints.getKey(), 
-						     pointToByteMessage(new PointMessage("POINTS from " + bspPeer.getPeerName(), peerPoints.getValue())));
+						     pointToByteMessage(new PointMessage(POINT_MSG_TAG, peerPoints.getValue())));
 			}
 				
 			return changeCount;
@@ -329,40 +303,28 @@ public class KMeansCluster {
 		 * @throws IOException
 		 */
 		private void updateStep(BSPPeerProtocol bspPeer) throws IOException {	
-			
-			BSPMessage bMsg;
-			boolean changed = false;
-			LOG.info("Start processing point messages");
-			while((bMsg = bspPeer.getCurrentMessage()) != null) {
-				final PointMessage pMsg = byteToPointMessage(bMsg);
-				LOG.info("Received " + pMsg.getData().size() + " points from tag = " + pMsg.getTag());
-				points.addAll(pMsg.getData());
-				changed = true;
-			}
-			
+				
 			LOG.info("My point count is now: " + points.size());
-						
-			if (changed) {
-				peerMeanMap.put(bspPeer.getPeerName(), calculateCenter(points));
+		
+			if (0 == points.size()) {
+				//Catch initial case where we have no points, and thus can't change our mean.
+				return;
 			}
 			
+			broadcastMyMean(bspPeer, calculateCenter(points));
 		}
 		
 		/**
-		 * Send my mean as a PointMessage to all peers, except myself.
+		 * Send my mean as a PointMessage to all peers.
 		 * @param bspPeer
 		 * @throws IOException
 		 */
-		private void broadcastMyMean(BSPPeerProtocol bspPeer) throws IOException {
+		private void broadcastMyMean(BSPPeerProtocol bspPeer, Point3D mean) throws IOException {
+			
+			final BSPMessage msg = pointToByteMessage(new PointMessage(bspPeer.getPeerName(), mean));
 			
 			for (String peer : bspPeer.getAllPeerNames()) {
-				
-				Point3D myMean = peerMeanMap.get(bspPeer.getPeerName());
-				PointMessage msg = new PointMessage(bspPeer.getPeerName(), myMean);
-				
-				if (!peer.equals(bspPeer.getPeerName())) {
-					bspPeer.send(peer, pointToByteMessage(msg));
-				}
+				bspPeer.send(peer, msg);
 			}
 		}
 
