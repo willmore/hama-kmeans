@@ -20,9 +20,8 @@ import org.apache.hama.bsp.BSPJob;
 import org.apache.hama.bsp.BSPJobClient;
 import org.apache.hama.bsp.BSPMessage;
 import org.apache.hama.bsp.BSPPeerProtocol;
-import org.apache.hama.bsp.ByteMessage;
 import org.apache.hama.bsp.ClusterStatus;
-import org.apache.hama.bsp.DoubleMessage;
+//import org.apache.hama.bsp.DoubleMessage;
 import org.apache.zookeeper.KeeperException;
 
 public class KMeansCluster {
@@ -52,47 +51,59 @@ public class KMeansCluster {
 				masterInitialize(bspPeer);	
 			}
 			
-			do {	
-				//LOG.info("At barrier 1");
+			do {
+				assert (0 == bspPeer.getNumCurrentMessages());
 				bspPeer.sync();
-				//LOG.info("After barrier 1");
 				
 				receivePeerMeans(bspPeer);
 				
 				int numChange = assignmentStep(bspPeer);
 				
-				//LOG.info("At barrier 2");
+				assert (0 == bspPeer.getNumCurrentMessages());
 				bspPeer.sync();
-				//LOG.info("After barrier 2");
 				
 				updateStep(bspPeer);
 				
 				notifyMasterNumChange(bspPeer, numChange);
 				
-				//LOG.info("At barrier 3");
+				assert (0 == bspPeer.getNumCurrentMessages());
 				bspPeer.sync();
-				//LOG.info("After barrier 3");
 				
 				if (isMaster(bspPeer)) {
 					broadcastContinue(bspPeer);
 				}
-
-				//LOG.info("At barrier 4");
+				
+				assert (0 == bspPeer.getNumCurrentMessages());
 				bspPeer.sync();
-				//LOG.info("After barrier 4");
 				
 				broadcastMyMean(bspPeer);
 				
 			} while (shouldContinue(bspPeer));
 			
+			//Empty inbox as any messages are now unnecessary
+			flushReceivedMessages(bspPeer);
+			
 			writeFinalOutput(bspPeer);
 			
 		}
 
-		private void writeFinalOutput(final BSPPeerProtocol bspPeer) throws IOException {
-			String fileName = conf.get(CONF_FILE_OUT) + "/" + bspPeer.getPeerName();
+		private void flushReceivedMessages(BSPPeerProtocol bspPeer) throws IOException {
 			
-			PointWriter writer = new PointWriter(fileSys.create(new Path(fileName.replace(":", "_")), true));
+			LOG.info("Flushing inbox");
+			while(bspPeer.getNumCurrentMessages() > 0) {
+				bspPeer.getCurrentMessage();
+			}
+			
+		}
+
+		private void writeFinalOutput(final BSPPeerProtocol bspPeer) throws IOException {
+			
+			
+			final String fileName = conf.get(CONF_FILE_OUT) + "/" + bspPeer.getPeerName().replace(":", "_");
+			
+			LOG.info("Writing final output to: " + fileName);
+			
+			PointWriter writer = new PointWriter(fileSys.create(new Path(fileName), true));
 			
 			writer.write(calculateCenter(points));
 			writer.write(points);
@@ -111,16 +122,15 @@ public class KMeansCluster {
 				buffer.putDouble(p.z);
 			}
 		   
-			return new ByteMessage(pm.getTag().getBytes(), buffer.array());
+			return new BSPMessage(pm.getTag().getBytes(), buffer.array());
 			
 		}
 		
 
 		private static PointMessage byteToPointMessage(BSPMessage bMsg) throws IOException {
 						
-			ByteMessage bm = (ByteMessage)bMsg;
 			
-			ByteBuffer buffer = ByteBuffer.wrap(bm.getData());
+			ByteBuffer buffer = ByteBuffer.wrap(bMsg.getData());
 			
 			List<Point3D> points = new ArrayList<Point3D>();
 			
@@ -128,7 +138,7 @@ public class KMeansCluster {
 				points.add(new Point3D(buffer.getDouble(), buffer.getDouble(), buffer.getDouble()));
 			}
 		
-			return new PointMessage(new String(bm.getTag()), points);
+			return new PointMessage(new String(bMsg.getTag()), points);
 			
 		}
 		
@@ -141,7 +151,7 @@ public class KMeansCluster {
 			
 			LOG.info("Notifying master of point change count: " + numChange);
 			
-			bspPeer.send(masterTask, new DoubleMessage("CHANGE_COUNT", numChange));
+			bspPeer.send(masterTask, new BSPMessage("CHANGE_COUNT".getBytes(), Integer.toString(numChange).getBytes()));
 		}
 
 		private void masterInitialize(final BSPPeerProtocol bspPeer) throws IOException {
@@ -203,9 +213,12 @@ public class KMeansCluster {
 		 */
 		private boolean shouldContinue(final BSPPeerProtocol bspPeer) throws IOException {
 			
-			assert (1 == bspPeer.getNumCurrentMessages());
+			//assert (1 == bspPeer.getNumCurrentMessages());
 			
-			return 1 == ((DoubleMessage)bspPeer.getCurrentMessage()).getData();	
+			LOG.info("Testing if should continue, number of messages should be 1 and are: " + 
+					bspPeer.getNumCurrentMessages());
+			
+			return 1 == bspPeer.getCurrentMessage().getData()[0];	
 		}
 
 		/**
@@ -216,12 +229,18 @@ public class KMeansCluster {
 			
 			int total = 0;
 			
-			DoubleMessage msg;
-			while((msg = (DoubleMessage)bspPeer.getCurrentMessage()) != null) {
-				total += msg.getData();
+			BSPMessage msg;
+			while((msg = bspPeer.getCurrentMessage()) != null) {
+				
+				total += Integer.valueOf(new String(msg.getData()));
 			}
 			
-			final DoubleMessage bMsg = new DoubleMessage("CONTINUE", total > 0 ? 1 : 0);
+			final boolean continueProcess = total > 0;
+			
+			
+			final BSPMessage bMsg = new BSPMessage("CONTINUE".getBytes(), continueProcess ? new byte[]{1} : new byte[]{0});
+			
+			LOG.info("Master sending continue msg: " +  continueProcess);
 			
 			for (final String peer : bspPeer.getAllPeerNames()) {
 				bspPeer.send(peer, bMsg);
@@ -284,6 +303,11 @@ public class KMeansCluster {
 			
 			//Notify other clusters of new points	
 			for (Map.Entry<String, List<Point3D>> peerPoints : peerNewPoints.entrySet()) {
+				
+				if (peerPoints.getValue().size() == 0) {
+					continue;
+				}
+				
 				LOG.info("Send " + peerPoints.getValue().size() + " to " + peerPoints.getKey());
 				bspPeer.send(peerPoints.getKey(), 
 						     pointToByteMessage(new PointMessage("POINTS from " + bspPeer.getPeerName(), peerPoints.getValue())));
@@ -357,6 +381,10 @@ public class KMeansCluster {
 		}
 
 		private boolean isMaster(BSPPeerProtocol bspPeer) {
+			
+			LOG.info("Testing if me (" + bspPeer.getPeerName() + ") is master: " +  
+					bspPeer.getPeerName().equals(masterTask));
+			
 			return bspPeer.getPeerName().equals(masterTask);
 		}
 
@@ -435,6 +463,8 @@ public class KMeansCluster {
 		conf.set(CONF_FILE_SOURCE, srcFilePath.toString());
 		conf.set(CONF_FILE_OUT, fileOutputDir);
 		
+		System.out.println("Src data at: " + srcFileName);
+		System.out.println("Out data at: " + fileOutputDir);
 		System.out.println("Starting job");
 		
 		if (bsp.waitForCompletion(true)) {

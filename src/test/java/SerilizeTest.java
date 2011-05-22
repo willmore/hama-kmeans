@@ -3,7 +3,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.apache.hama.bsp.ByteMessage;
+import org.apache.hama.bsp.BSPMessage;
 
 import ee.ut.cs.willmore.Point3D;
 import ee.ut.cs.willmore.PointMessage;
@@ -12,7 +12,7 @@ import ee.ut.cs.willmore.PointMessage;
 public class SerilizeTest {
 
 	
-	private static ByteMessage pointToByteMessage(PointMessage pm) throws IOException {
+	private static BSPMessage pointToByteMessage(PointMessage pm) throws IOException {
 		
 		ByteBuffer buffer = ByteBuffer.allocate(pm.getData().size() * 3 * 16);
 	    
@@ -23,11 +23,11 @@ public class SerilizeTest {
 			buffer.putDouble(p.z);
 		}
 	   
-		return new ByteMessage(pm.getTag().getBytes(), buffer.array());
+		return new BSPMessage(pm.getTag().getBytes(), buffer.array());
 	}
 	
 
-	private static PointMessage byteToPointMessage(ByteMessage bm) throws IOException {
+	private static PointMessage byteToPointMessage(BSPMessage bm) throws IOException {
 		
 		ByteBuffer buffer = ByteBuffer.wrap(bm.getData());
 		

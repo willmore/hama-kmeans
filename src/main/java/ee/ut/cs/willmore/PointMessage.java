@@ -8,7 +8,7 @@ import java.util.List;
 
 import org.apache.hama.bsp.BSPMessage;
 
-public class PointMessage extends BSPMessage {
+public class PointMessage {
 	
 	private String tag;
 	private List<Point3D> points;
@@ -24,7 +24,7 @@ public class PointMessage extends BSPMessage {
 		this.points.add(point);
 	}
 	
-	@Override
+	//@Override
 	public void readFields(DataInput in) throws IOException {
 		byte tagBytes[] = new byte[in.readInt()];
 	    in.readFully(tagBytes, 0, tagBytes.length);
@@ -37,7 +37,7 @@ public class PointMessage extends BSPMessage {
 	    }
 	}
 
-	@Override
+	//@Override
 	public void write(DataOutput out) throws IOException {
 		out.writeBytes(tag);
 		for (Point3D p : points) {
@@ -48,12 +48,12 @@ public class PointMessage extends BSPMessage {
 
 	}
 
-	@Override
+	//@Override
 	public String getTag() {
 		return this.tag;
 	}
 
-	@Override
+	//@Override
 	public List<Point3D> getData() {
 		return this.points;
 	}

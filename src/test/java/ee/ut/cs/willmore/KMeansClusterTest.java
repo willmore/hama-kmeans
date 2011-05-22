@@ -19,7 +19,9 @@ public class KMeansClusterTest {
 		// BSP job configuration
 		HamaConfiguration conf = new HamaConfiguration();
 
-		conf.setInt("bsp.local.tasks.maximum", 10);
+		final int CLUSTER_COUNT = 3;
+		
+		conf.setInt("bsp.local.tasks.maximum", CLUSTER_COUNT);
 
 		BSPJob bsp = new BSPJob(conf, KMeansCluster.class);
 		// Set the job name
@@ -40,9 +42,9 @@ public class KMeansClusterTest {
 		}
 
 		System.out.println("Setting number of tasks / clusters to:"
-				+ cluster.getGroomServers());
+				+ CLUSTER_COUNT);
 
-		bsp.setNumBspTask(cluster.getGroomServers());
+		bsp.setNumBspTask(CLUSTER_COUNT);
 
 		FileSystem fileSys = FileSystem.get(conf);
 
@@ -55,7 +57,7 @@ public class KMeansClusterTest {
 		final int numPoints = 1000;
 		final int range = 100;
 
-		new SphereRandomPointGenerator(10, 5).generateSourceFile(fileSys,
+		new SphereRandomPointGenerator(CLUSTER_COUNT, 5).generateSourceFile(fileSys,
 				srcFilePath, numPoints, range);
 
 		conf.set(KMeansCluster.CONF_FILE_SOURCE, srcFilePath.toString());

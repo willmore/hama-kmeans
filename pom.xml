@@ -12,11 +12,12 @@
 		</repository>
 	</distributionManagement>
   
+  
   <dependencies>
     <dependency>
-      <groupId>org.apache.hama</groupId>
-      <artifactId>hama-core</artifactId>
-      <version>0.3.0-incubating-SNAPSHOT</version>
+      <groupId>org.apache.incubator</groupId>
+      <artifactId>hama</artifactId>
+      <version>0.2.0-incubating-SNAPSHOT</version>
     </dependency>
     <dependency>
       <groupId>commons-cli</groupId>
@@ -83,6 +84,7 @@
     </plugins>
   </build>
   
+  <!--  
   <repositories>
 	<repository>
 		<id>jboss-public-repository-group</id>
@@ -99,4 +101,5 @@
 		</snapshots>
 	</repository>
   </repositories>
+  -->
 </project>
