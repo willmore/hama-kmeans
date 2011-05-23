@@ -8,6 +8,12 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.CommandLineParser;
+import org.apache.commons.cli.GnuParser;
+import org.apache.commons.cli.HelpFormatter;
+import org.apache.commons.cli.Options;
+import org.apache.commons.cli.ParseException;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -66,13 +72,11 @@ public class KMeansCluster {
 				
 				assignmentStep(bspPeer);
 				
-				updateStep(bspPeer);
-				
-				
+				updateStep(bspPeer);		
 			} 
 			
 			//Empty inbox as any messages are now unnecessary
-			flushReceivedMessages(bspPeer);
+			//flushReceivedMessages(bspPeer);
 			
 			writeFinalOutput(bspPeer);	
 		}
@@ -371,12 +375,35 @@ public class KMeansCluster {
 	public static void main(String[] args) throws InterruptedException,
 			IOException, ClassNotFoundException {
 		
-		if (2 != args.length) {
-			System.out.println("Usage: KMeansCluster <num_points> <num_clusters>");
-			System.exit(-1);
+		Options options = new Options();
+
+		options.addOption("points", true, "Number of points (observations). Default value is 1000.");
+		options.addOption("k", true, "Number of clusters. Default value is the number of BSPPeers.");
+		options.addOption("display", true, "Display script");
+		
+		
+		CommandLineParser parser = new GnuParser();
+		
+		CommandLine line = null;
+		
+		try {
+	        // parse the command line arguments
+	        line = parser.parse( options, args );
+	    }
+	    catch( ParseException exp ) {
+	    	HelpFormatter formatter = new HelpFormatter();
+	    	formatter.printHelp( "KMeansCluster", options );
+	    	System.exit(-1);
+	    }
+		
+		 
+		String graphScript = null;
+
+		if (line.hasOption("display")) {
+			graphScript = line.getOptionValue("display");
 		}
 		
-		final int k = Integer.valueOf(args[1]);
+		
 		
 		// BSP job configuration
 		HamaConfiguration conf = new HamaConfiguration();
@@ -392,6 +419,19 @@ public class KMeansCluster {
 
 		System.out.println("Grooms are: " + cluster.getActiveGroomNames());
 		
+		int k = cluster.getGroomServers();
+
+		if (line.hasOption("k")) {
+			k = Integer.valueOf(line.getOptionValue("k"));
+		}
+		
+		int numPoints = 1000;
+		
+		if (line.hasOption("points")) {
+			k = Integer.valueOf(line.getOptionValue("points"));
+		}
+
+		
 		// Choose one as a master
 		for (String peerName : cluster.getActiveGroomNames().values()) {
 			System.out.println("Master Peer:" + peerName);
@@ -399,14 +439,14 @@ public class KMeansCluster {
 			break;
 		}
 
-		System.out.println("Setting number of tasks / clusters to:" + cluster.getGroomServers());
+		System.out.println("Setting number of tasks / clusters to:" + k);
 		
 		if (k > cluster.getGroomServers()) {
 			System.out.println("Request K of " + k + " is greater than number of grooms " + cluster.getGroomServers());
 			System.exit(-1);
 		}
 		
-		bsp.setNumBspTask(cluster.getGroomServers());
+		bsp.setNumBspTask(k);
 
 		FileSystem fileSys = FileSystem.get(conf);
 
@@ -416,7 +456,6 @@ public class KMeansCluster {
 		final String fileOutputDir = "/tmp/kmeans_" + jobTime + "/output";
 
 		final Path srcFilePath = new Path(srcFileName);
-		final int numPoints = Integer.valueOf(args[0]);
 		
 		final int range = 100; //Size of X,Y,Z cube containing points
 
@@ -439,6 +478,13 @@ public class KMeansCluster {
 
 		System.out.println("Output in: " + new Path(localOut));
 
+		
+		if (graphScript != null) {
+			final String cmd = graphScript + " " + localOut;
+			Runtime run = Runtime.getRuntime();
+			Process pr = run.exec(cmd);
+		}
+		
 	}
 
 }

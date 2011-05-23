@@ -6,8 +6,6 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
-import org.apache.hama.bsp.BSPMessage;
-
 public class PointMessage {
 	
 	private String tag;
