@@ -31,7 +31,7 @@ import org.apache.hama.bsp.ClusterStatus;
 //import org.apache.hama.bsp.DoubleMessage;
 import org.apache.zookeeper.KeeperException;
 
-public class KMeansCluster {
+public class KMeansClusterBad {
 	
 	static final String CONF_FILE_OUT = "output.";
 	static String CONF_MASTER_TASK = "master.task.";
@@ -48,33 +48,6 @@ public class KMeansCluster {
 		static final String POINT_MSG_TAG = "POINTS";
 
 		
-		/*		
-		while (true) {	
-
-			
-			bspPeer.sync();				
-			
-			boolean converged = processMessages(bspPeer);
-			
-			if (converged) {
-				break;
-			}
-				
-			assignmentStep(bspPeer);
-
-			bspPeer.sync()
-			
-			processMessages(bspPeer);
-				
-			updateStep(bspPeer);
-		}
-		*/
-		
-		enum KMeansStep {
-			ASSIGNMENT,
-			UPDATE
-		}
-		
 		//Map of peer name => cluster center (mean)
 		final Map<String, Point3D> peerMeanMap = new HashMap<String, Point3D>();
 		
@@ -89,22 +62,24 @@ public class KMeansCluster {
 				masterInitialize(bspPeer);	
 			}
 			
-			while (true) {
-				
-				bspPeer.sync();
+			while (true) {	
+
+				bspPeer.sync();				
 				
 				boolean converged = processMessages(bspPeer);
-								
+				
 				if (converged) {
 					break;
 				}
+					
+				assignmentStep(bspPeer);
 				
-				//send new assignments
-				assignmentStep(bspPeer); 
+				bspPeer.sync();
 				
-				//Calculate my mean and broadcast it.
-				updateStep(bspPeer); 
-			} 
+				processMessages(bspPeer);
+				
+				updateStep(bspPeer);
+			}
 					
 			double wcss = wcss(bspPeer);
 			
@@ -113,6 +88,14 @@ public class KMeansCluster {
 			writeFinalOutput(bspPeer);	
 		}
 
+		private void broadcastDummy(BSPPeerProtocol bspPeer) throws IOException {
+			
+			final BSPMessage msg = new BSPMessage("DUMMY".getBytes(), new byte[0]);
+			
+			for (String peer : bspPeer.getAllPeerNames()) {
+				bspPeer.send(peer, msg);
+			}
+		}
 		
 		
 		/**
@@ -146,7 +129,7 @@ public class KMeansCluster {
 				} else if (isMeanMessage(bspPeer, msg)) {
 					converged = updateMeanMap(msg) && converged;
 				} else {
-					throw new RuntimeException("Unknown msg tag: " + new String(msg.getTag()));
+					//throw new RuntimeException("Unknown msg tag: " + new String(msg.getTag()));
 				}
 			}
 			
@@ -462,7 +445,7 @@ public class KMeansCluster {
 		// BSP job configuration
 		HamaConfiguration conf = new HamaConfiguration();
 
-		BSPJob bsp = new BSPJob(conf, KMeansCluster.class);
+		BSPJob bsp = new BSPJob(conf, KMeansClusterBad.class);
 		// Set the job name
 		bsp.setJobName("K Means Clustering");
 		bsp.setBspClass(ClusterBSP.class);

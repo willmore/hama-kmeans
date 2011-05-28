@@ -1,0 +1,51 @@
+Hama K-Means Clustering
+-------------------------------------------------------------------
+
+This project implements k-means clustering using the Hama framework.
+
+-------------------------------------------------------------------
+Building
+
+This is a Java Maven project. All dependencies and build configurations are 
+located in the ./pom.xml file. Please consult your local environment / IDE on
+how to build a Maven project.
+
+The result of a successful build is hama-kmeans-<VERSION>.jar in the ./target
+directory.
+
+To run the provided Python display script, you will need to install Python 2.6 
+and the matplotlib module.
+
+-------------------------------------------------------------------
+Running
+
+You must have a Hama and Hadoop system installation. 
+Consult http://wiki.apache.org/hama/GettingStarted.
+
+To run:
+$HAMA_HOME/bin/hama jar hama-kmeans.jar ee.ut.cs.willmore.KMeansCluster
+
+The program will generate a random input set on the configured 
+HDFS and launch the k-means solver. Output will be stored on HDFS and
+additionally be copied to a the local /tmp directory. The location of 
+these files will be printed to stdout.
+
+The program support a variety of options for generating input data:
+
+ -points  Number of points (observations). Default value is 1000.
+ 
+ -k       Number of clusters. Default value is the number of BSPPeers.
+          Value must not exceed number of BSPPeers.
+ 
+ -display A display script that will be called immediately after clustering has
+          completed. A sample Python script is supplied at ./python/graph_output.py
+ 
+ -noise   Number of extra random points scattered throughout the problem space.
+ 
+ -pattern Format of <pattern>[:<size>] where pattern of sphere|cube|random and 
+          optional size of points for each cluster. Example is sphere:20 which 
+          makes spheres of radius 20.
+ 
+ -size    Point world size in X,Y,Z dimensions. Example: a value of 100 would 
+          create a world of 100 X 100 X 100.
+		

@@ -58,7 +58,7 @@ public class KMeansClusterTest {
 		final int range = 100;
 
 		new SphereRandomPointGenerator(CLUSTER_COUNT, 5).generateSourceFile(fileSys,
-				srcFilePath, numPoints, range);
+				srcFilePath, numPoints, range, 0, 3);
 
 		conf.set(KMeansCluster.CONF_FILE_SOURCE, srcFilePath.toString());
 		conf.set(KMeansCluster.CONF_FILE_OUT, fileOutputDir);

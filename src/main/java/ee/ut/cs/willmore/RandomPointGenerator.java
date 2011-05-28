@@ -21,7 +21,7 @@ public class RandomPointGenerator implements PointGenerator {
 	 * @throws IOException
 	 */
 	@Override
-	public void generateSourceFile(FileSystem fileSys, Path fileName, int numPoints, int range) throws IOException {
+	public void generateSourceFile(FileSystem fileSys, Path fileName, int numPoints, int range, int noise, int dimensions) throws IOException {
 		
 		final FSDataOutputStream out = fileSys.create(fileName, true);
 		final Random random = new Random();
@@ -32,7 +32,7 @@ public class RandomPointGenerator implements PointGenerator {
 			
 			out.writeDouble(random.nextDouble()*range); // X
 			out.writeDouble(random.nextDouble()*range); // Y 
-			out.writeDouble(random.nextDouble()*range); // Z		
+			out.writeDouble(dimensions == 2 ? 0 : random.nextDouble()*range); // Z		
 		}
 		
 		out.close();

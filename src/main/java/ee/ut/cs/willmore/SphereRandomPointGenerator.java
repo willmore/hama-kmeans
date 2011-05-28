@@ -68,11 +68,11 @@ public class SphereRandomPointGenerator implements PointGenerator {
 	 * @throws IOException
 	 */
 	@Override
-	public void generateSourceFile(FileSystem fileSys, Path fileName, int numPoints, int range) throws IOException {
+	public void generateSourceFile(FileSystem fileSys, Path fileName, int numPoints, int range, int noise, int dimensions) throws IOException {
 		
 		final FSDataOutputStream out = fileSys.create(fileName, true);
 		
-		out.writeInt(numPoints);
+		out.writeInt(numPoints + noise);
 		
 		final List<Sphere> spheres = new ArrayList<Sphere>(numSpheres);
 		
@@ -90,7 +90,13 @@ public class SphereRandomPointGenerator implements PointGenerator {
 			Point3D randomPoint = randomSphere.randomPoint();
 			out.writeDouble(randomPoint.x); // X
 			out.writeDouble(randomPoint.y); // Y 
-			out.writeDouble(randomPoint.z); // Z		
+			out.writeDouble(dimensions == 2 ? 0 :randomPoint.z); // Z		
+		}
+		
+		for (int i = 0; i < noise; i++) {
+			out.writeDouble(random.nextDouble()*range); // X
+			out.writeDouble(random.nextDouble()*range); // Y 
+			out.writeDouble(dimensions == 2 ? 0 :random.nextDouble()*range); // Z
 		}
 		
 		out.close();
